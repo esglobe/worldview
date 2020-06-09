@@ -73,10 +73,6 @@ export class MapInteractions extends React.Component {
       isShowingClick, changeCursor, measureIsActive, compareState, swipeOffset, proj,
       granuleCMRGeometry, granuleLayerId, hoveredGranule, toggleHoveredGranule,
     } = this.props;
-    const [lon, lat] = coord;
-    if (lon < -250 || lon > 250 || lat < -90 || lat > 90) {
-      return;
-    }
 
     if (granuleCMRGeometry) {
       let toggledGranuleFootprint;
@@ -115,7 +111,10 @@ export class MapInteractions extends React.Component {
       }
     }
 
-
+    const [lon, lat] = coord;
+    if (lon < -250 || lon > 250 || lat < -90 || lat > 90) {
+      return;
+    }
     const hasFeatures = map.hasFeatureAtPixel(pixels);
     if (hasFeatures && !isShowingClick && !measureIsActive) {
       let isActiveLayer = false;
