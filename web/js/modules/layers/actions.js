@@ -17,6 +17,10 @@ import {
   REMOVE_LAYER,
   UPDATE_OPACITY,
   ADD_LAYERS_FOR_EVENT,
+  UPDATE_GRANULE_LAYER_DATES,
+  RESET_GRANULE_LAYER_DATES,
+  UPDATE_GRANULE_CMR_GEOMETRY,
+  TOGGLE_HOVERED_GRANULE,
 } from './constants';
 import { selectProduct } from '../data/actions';
 
@@ -154,6 +158,57 @@ export function removeLayer(id) {
       activeString,
       def,
       layers: update(layers[activeString], { $splice: [[index, 1]] }),
+    });
+  };
+}
+export function updateGranuleCMRGeometry(id, geometry) {
+  return (dispatch, getState) => {
+    const { compare } = getState();
+    const { activeString } = compare;
+    dispatch({
+      type: UPDATE_GRANULE_CMR_GEOMETRY,
+      id,
+      activeKey: activeString,
+      geometry,
+    });
+  };
+}
+export function updateGranuleLayerDates(dates, id, count) {
+  return (dispatch, getState) => {
+    const { compare, layers } = getState();
+    const { activeString } = compare;
+    const { geometry } = layers.granuleLayers[activeString][id];
+    dispatch({
+      type: UPDATE_GRANULE_LAYER_DATES,
+      id,
+      activeKey: activeString,
+      dates,
+      count,
+      geometry,
+    });
+  };
+}
+export function resetGranuleLayerDates(id) {
+  return (dispatch, getState) => {
+    const { compare } = getState();
+    const { activeString } = compare;
+    dispatch({
+      type: RESET_GRANULE_LAYER_DATES,
+      id,
+      activeKey: activeString,
+    });
+  };
+}
+export function toggleHoveredGranule(id, granuleDate) {
+  return (dispatch, getState) => {
+    const { compare } = getState();
+    const { activeString } = compare;
+    const hoveredGranule = granuleDate ? { granuleDate, activeString, id } : null;
+    dispatch({
+      type: TOGGLE_HOVERED_GRANULE,
+      hoveredGranule,
+      id,
+      activeString,
     });
   };
 }

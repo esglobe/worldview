@@ -2,12 +2,15 @@ import React from 'react';
 import { connect } from 'react-redux';
 import PropTypes from 'prop-types';
 import { groupBy as lodashGroupBy, debounce as lodashDebounce, get as lodashGet } from 'lodash';
+import { Polygon as OlGeomPolygon } from 'ol/geom';
+import * as olProj from 'ol/proj';
 import OlCoordinates from '../components/map/ol-coordinates';
 import vectorDialog from './vector-dialog';
 import { onMapClickGetVectorFeatures } from '../modules/vector-styles/util';
 import { openCustomContent, onClose } from '../modules/modal/actions';
 import { selectVectorFeatures as selectVectorFeaturesActionCreator } from '../modules/vector-styles/actions';
 import { changeCursor as changeCursorActionCreator } from '../modules/map/actions';
+import { toggleHoveredGranule } from '../modules/layers/actions';
 import { isFromActiveCompareRegion } from '../modules/compare/util';
 import { hasNonClickableVectorLayer } from '../modules/layers/util';
 import { ACTIVATE_VECTOR_ALERT } from '../modules/alerts/constants';
@@ -68,11 +71,51 @@ export class MapInteractions extends React.Component {
     const coord = map.getCoordinateFromPixel(pixels);
     const {
       isShowingClick, changeCursor, measureIsActive, compareState, swipeOffset, proj,
+      granuleCMRGeometry, granuleLayerId, hoveredGranule, toggleHoveredGranule,
     } = this.props;
     const [lon, lat] = coord;
     if (lon < -250 || lon > 250 || lat < -90 || lat > 90) {
       return;
     }
+
+    if (granuleCMRGeometry) {
+      let toggledGranuleFootprint;
+      const gcmr = Object.keys(granuleCMRGeometry).map((key) => ({ [key]: granuleCMRGeometry[key] }));
+
+      for (let i = 0; i < gcmr.length; i += 1) {
+        const granObj = gcmr[i];
+        const date = Object.keys(granObj)[0];
+        const geom = Object.values(granObj)[0];
+
+        // string coord to num and transform is polar projections
+        const geomVertices = geom.map((xy) => {
+          const coordNums = [parseFloat(xy[0]), parseFloat(xy[1])];
+          // transform for non geographic projections
+          if (crs !== 'EPSG:4326') {
+            return olProj.transform(coordNums, 'EPSG:4326', crs);
+          }
+          return coordNums;
+        });
+
+        // update geom polygon for precise coordinate intersect inclusion check
+        const polygon = new OlGeomPolygon([geomVertices]);
+        const areCoordsWithinPolygon = polygon.intersectsCoordinate([coord[0], coord[1]]);
+
+        // if coordinates within granule footprint, toggle to show with map/ui
+        if (areCoordsWithinPolygon) {
+          //! MULTIPLE POLYGONS CONTAIN COORDS, BUT ONLY MOST RECENT DATE IS DISPLAYED
+          //! SHOULD THIS BEHAVIOR BE BLOCKED/DEBOUNCED?
+          toggledGranuleFootprint = true;
+          toggleHoveredGranule(granuleLayerId, date);
+        }
+      }
+
+      if (hoveredGranule && !toggledGranuleFootprint) {
+        toggleHoveredGranule(granuleLayerId, null);
+      }
+    }
+
+
     const hasFeatures = map.hasFeatureAtPixel(pixels);
     if (hasFeatures && !isShowingClick && !measureIsActive) {
       let isActiveLayer = false;
@@ -163,16 +206,42 @@ const mapDispatchToProps = (dispatch) => ({
         },
       }));
   },
+  toggleHoveredGranule: (id, granuleDate) => {
+    dispatch(toggleHoveredGranule(id, granuleDate));
+  },
 });
 function mapStateToProps(state) {
   const {
     modal, map, measure, vectorStyles, browser, compare, proj, ui, layers,
   } = state;
   let swipeOffset;
+  const groupName = compare.activeString;
   const activeLayers = layers[compare.activeString];
   if (compare.active && compare.mode === 'swipe') {
     const percentOffset = state.compare.value || 50;
     swipeOffset = browser.screenWidth * (percentOffset / 100);
+  }
+
+  let granuleCMRGeometry;
+  let granuleLayerId;
+  const { hoveredGranule } = layers;
+
+  // TODO: CURRENTLY RELYING ON PROVIDED LAYER ID, NEED TO SET UP GLOBAL LAYER STATE WITH CURRENT "FAMILY" OF SATELLITE/PRODUCT
+
+  // determine how the granules can be grouped - is any granule that starts with 'VIIRS_NOAA20_CorrectedReflectance_' in the layer ID enough?
+  // when granule is added, that CMR data is added to family object instead of individual layer object
+  // when ALL are removed, that family object is destroyed
+  // cannot have more than one family object at a time
+
+  const isGranuleIdOptions = {
+    VIIRS_NOAA20_CorrectedReflectance_TrueColor_Granule_v1_NRT: true,
+    'VIIRS_NOAA20_CorrectedReflectance_BandsM3-I3-M11_Granule_v1_NRT': true,
+    'VIIRS_NOAA20_CorrectedReflectance_BandsM11-I2-I1_Granule_v1_NRT': true,
+  };
+  const isActiveGranuleVisible = layers.active.filter((layer) => layer.visible && isGranuleIdOptions[layer.id]);
+  if (isActiveGranuleVisible.length && layers.granuleLayers[groupName] && layers.granuleLayers[groupName].VIIRS_NOAA20_CorrectedReflectance_TrueColor_Granule_v1_NRT) {
+    granuleCMRGeometry = layers.granuleLayers[groupName].VIIRS_NOAA20_CorrectedReflectance_TrueColor_Granule_v1_NRT.geometry;
+    granuleLayerId = 'VIIRS_NOAA20_CorrectedReflectance_TrueColor_Granule_v1_NRT';
   }
 
   return {
@@ -183,6 +252,9 @@ function mapStateToProps(state) {
     lastSelected: vectorStyles.selected,
     measureIsActive: measure.isActive,
     isMobile: browser.lessThan.medium,
+    granuleCMRGeometry,
+    granuleLayerId,
+    hoveredGranule,
     compareState: compare,
     swipeOffset,
     proj,
@@ -201,12 +273,16 @@ MapInteractions.propTypes = {
   openVectorDiaglog: PropTypes.func.isRequired,
   selectVectorFeatures: PropTypes.func.isRequired,
   compareState: PropTypes.object,
+  granuleCMRGeometry: PropTypes.object,
+  granuleLayerId: PropTypes.string,
+  hoveredGranule: PropTypes.object,
   isMobile: PropTypes.bool,
   lastSelected: PropTypes.object,
   proj: PropTypes.object,
   swipeOffset: PropTypes.number,
   activeLayers: PropTypes.array,
   activateVectorAlert: PropTypes.func,
+  toggleHoveredGranule: PropTypes.func,
 };
 export default connect(
   mapStateToProps,
